@@ -21,12 +21,14 @@ import com.example.wavedrive.ui.theme.WaveDriveTheme
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.concurrent.fixedRateTimer
 
 class MainActivity : ComponentActivity(), SensorEventListener {
 
     private lateinit var sensorManager: SensorManager
     private var accelerometer: Sensor? = null
     private var tiltMessage by mutableStateOf("Flat")
+    private var isConnected = false
 
     // IP adresa robota
     private val robotIp = "192.168.4.1"
@@ -48,6 +50,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 }
             }
         }
+
+        // Pokrećemo inicijalnu proveru konekcije
+        checkConnection()
+
+        // Periodična provera konekcije
+        fixedRateTimer("connectionChecker", true, 0L, 5000) {
+            checkConnection()
+        }
     }
 
     override fun onResume() {
@@ -60,39 +70,53 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         sensorManager.unregisterListener(this)
     }
 
-    // Funkcija za slanje JSON komande robotu
-    private fun sendSpeedCommand(leftSpeed: Int, rightSpeed: Int) {
-        // Kreiramo JSON komandu u formatu stringa za URL
-        val jsonCommand = """{"T":1,"L":$leftSpeed,"R":$rightSpeed}"""
-        val url = "http://$robotIp/js?json=$jsonCommand"
-//        val url = "http://$robotIp/cmd?inputA=1&inputB=$leftSpeed&inputC=$rightSpeed"
-
+    // Funkcija za proveru konekcije sa robotom
+    private fun checkConnection() {
         Thread {
             try {
-                // Otvaramo konekciju sa GET metodom i dodajemo JSON kao parametar URL-a
-                val connection = URL(url).openConnection() as HttpURLConnection
+                val url = URL("http://$robotIp")
+                val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
-
+                connection.connect()
                 val responseCode = connection.responseCode
-                val responseMessage = connection.inputStream.bufferedReader().use { it.readText() }
-
-                Log.d("Response Code", responseCode.toString())
-                Log.d("Response Message", responseMessage)
+                val currentConnectionStatus = responseCode == 200
 
                 runOnUiThread {
-                    if (responseCode == 200) {
-                        Toast.makeText(this, "Command sent successfully: $responseMessage", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(this, "Failed to send command: $responseCode, $responseMessage", Toast.LENGTH_LONG).show()
+                    if (currentConnectionStatus != isConnected) {
+                        isConnected = currentConnectionStatus
+                        val message = if (isConnected) "Connection successful" else "Connection lost"
+                        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
                     }
                 }
                 connection.disconnect()
             } catch (e: Exception) {
                 e.printStackTrace()
                 runOnUiThread {
-                    Toast.makeText(this, "Error sending command: ${e.message}", Toast.LENGTH_LONG).show()
-                    Log.e("Error", e.message ?: "Unknown error")
+                    if (isConnected) {
+                        isConnected = false
+                        Toast.makeText(this, "Connection lost", Toast.LENGTH_SHORT).show()
+                    }
                 }
+            }
+        }.start()
+    }
+
+    // Funkcija za slanje JSON komande robotu
+    private fun sendSpeedCommand(leftSpeed: Int, rightSpeed: Int) {
+        val jsonCommand = """{"T":1,"L":$leftSpeed,"R":$rightSpeed}"""
+        val url = "http://$robotIp/js?json=$jsonCommand"
+
+        Thread {
+            try {
+                val connection = URL(url).openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connect()
+
+                val responseCode = connection.responseCode
+                connection.disconnect()
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Log.e("Error", e.message ?: "Unknown error")
             }
         }.start()
     }
